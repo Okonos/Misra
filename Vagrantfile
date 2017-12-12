@@ -1,7 +1,7 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-numnodes = 2
+numnodes = 3
 vmmemory = 512
 
 nodes = []
@@ -31,6 +31,12 @@ Vagrant.configure("2") do |config|
 				echo 'loopback_users = none' > /etc/rabbitmq/rabbitmq.conf
 			SHELL
 			n.vm.provision "shell", path: "./install-rabbitmq.sh"
+			n.vm.provision "file", source: "requirements.txt",
+				destination: "/tmp/requirements.txt"
+			n.vm.provision "shell", privileged: true, inline: <<-SHELL
+				apt-get install -y python3-pip
+				LC_ALL=C pip3 install -r /tmp/requirements.txt
+			SHELL
 			if File.file?("./hosts")
 				n.vm.provision "file", source: "hosts", destination: "/tmp/hosts"
 				n.vm.provision "shell", inline: "cat /tmp/hosts >> /etc/hosts",
