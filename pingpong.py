@@ -3,19 +3,19 @@ import pika
 import logging
 import time
 import signal
-from enum import Enum
+from enum import IntEnum
 
 
-class HasToken(Enum):
+class HasToken(IntEnum):
     NONE = 0
     PING = 1
     PONG = 2
     BOTH = 3
 
 
-class TokenType(Enum):
-    PING = '0'
-    PONG = '1'
+class TokenType(IntEnum):
+    PING = 1
+    PONG = 2
 
 
 class Token:
@@ -28,7 +28,7 @@ class Token:
     @classmethod
     def from_bytes(cls, values: bytes):
         type_, value = values.split(b' ')
-        return cls(TokenType(type_.decode(encoding='utf-8')), int(value))
+        return cls(TokenType(int(type_)), int(value))
 
     def values(self):
         return '{} {}'.format(self.type.value, self.value)
@@ -73,21 +73,12 @@ class Node:
 
     def pass_token(self, token: Token):
         self.m = token.value
-        # time.sleep(0.5 if token.type == TokenType.PING else 1)
         if token.type == TokenType.PONG:
             time.sleep(1)
             self.pong_token = None
-            if self.hasToken == HasToken.BOTH:
-                self.hasToken = HasToken.PING
-            else:
-                self.hasToken = HasToken.NONE
         else:
             self.ping_token = None
-            if self.hasToken == HasToken.BOTH:
-                self.hasToken = HasToken.PONG
-            else:
-                self.hasToken = HasToken.NONE
-        # TODO IntEnums
+        self.hasToken = HasToken(self.hasToken - token.type)
         self.remote_channel.publish(exchange='', routing_key='token_queue',
                                     body=token.values())
 
@@ -102,7 +93,6 @@ class Node:
         self.handle_token(Token.from_bytes(msg[2]))
         return True
 
-    # TODO
     def handle_token(self, token: Token):
         if abs(token.value) < self.m:  # old token
             self.logger.warning(
@@ -111,20 +101,12 @@ class Node:
 
         self.logger.info("Received token: {}".format(token))
 
+        assert self.hasToken not in (HasToken(token.type), HasToken.BOTH)
+        self.hasToken = HasToken(self.hasToken + token.type)
         if token.type == TokenType.PING:
-            assert self.hasToken not in (HasToken.PING, HasToken.BOTH)
             self.ping_token = token
-            if self.hasToken == HasToken.PONG:
-                self.hasToken = HasToken.BOTH
-            else:
-                self.hasToken = HasToken.PING
         else:  # PONG
-            assert self.hasToken not in (HasToken.PONG, HasToken.BOTH)
             self.pong_token = token
-            if self.hasToken == HasToken.PING:
-                self.hasToken = HasToken.BOTH
-            else:
-                self.hasToken = HasToken.PONG
 
         if self.hasToken == HasToken.BOTH:
             self.logger.warning("Tokens met, incarnating")
