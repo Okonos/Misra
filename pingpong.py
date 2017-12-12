@@ -1,21 +1,64 @@
 import os
 import pika
+import logging
 import time
 import signal
+from enum import Enum
+
+
+class HasToken(Enum):
+    NONE = 0
+    PING = 1
+    PONG = 2
+    BOTH = 3
+
+
+class TokenType(Enum):
+    PING = '0'
+    PONG = '1'
+
+
+class Token:
+    def __init__(self, type_: TokenType, value: int):
+        if not isinstance(type_, TokenType):
+            raise TypeError("Token type must be an instance of TokenType")
+        self.type = type_
+        self.value = value
+
+    @classmethod
+    def from_bytes(cls, values: bytes):
+        type_, value = values.split(b' ')
+        return cls(TokenType(type_.decode(encoding='utf-8')), int(value))
+
+    def values(self):
+        return '{} {}'.format(self.type.value, self.value)
+
+    def __str__(self):
+        return "Token ({}, {})".format(self.type.name, self.value)
 
 
 class Node:
     def __init__(self):
-        self.exit_flag = False
+        self.m = 0
+        self.hasToken = HasToken.NONE
+        self.ping_token = None
+        self.pong_token = None
+        self.ID = int(os.uname().nodename[4:])
+        self.logger = logging.getLogger(__file__)
+        self.logger.setLevel(logging.DEBUG)
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter(
+            '%(asctime)s:%(msecs)d - %(levelname)s - %(message)s',
+            datefmt='%M:%S')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
         with open('/etc/hosts', 'r') as f:
-            lines = f.readlines()
+            nodes = [l.split(' ')[1] for l in f.readlines()
+                     if l.startswith('192.168.10.')]
 
-        nodes = [l.split(' ')[1] for l in lines if l.startswith('192.168.10.')]
-
-        hostname = os.uname().nodename
-        hostnum = int(hostname[4:])
-        neighbor = nodes[hostnum % len(nodes)]
+        neighbor = nodes[self.ID % len(nodes)]
         self.remote_conn = pika.BlockingConnection(
             pika.ConnectionParameters(host=neighbor))
         self.remote_channel = self.remote_conn.channel()
@@ -25,40 +68,123 @@ class Node:
         self.local_channel = self.local_conn.channel()
         self.local_channel.queue_declare(queue='token_queue', exclusive=True)
 
-        self.local_channel.basic_consume(self.tokenReceived, no_ack=True,
+        self.local_channel.basic_consume(self.receive_token, no_ack=True,
                                          queue='token_queue')
 
-        self.hasToken = True if hostnum == 1 else False
+    def pass_token(self, token: Token):
+        self.m = token.value
+        # time.sleep(0.5 if token.type == TokenType.PING else 1)
+        if token.type == TokenType.PONG:
+            time.sleep(1)
+            self.pong_token = None
+            if self.hasToken == HasToken.BOTH:
+                self.hasToken = HasToken.PING
+            else:
+                self.hasToken = HasToken.NONE
+        else:
+            self.ping_token = None
+            if self.hasToken == HasToken.BOTH:
+                self.hasToken = HasToken.PONG
+            else:
+                self.hasToken = HasToken.NONE
+        # TODO IntEnums
+        self.remote_channel.publish(exchange='', routing_key='token_queue',
+                                    body=token.values())
 
-    def tokenReceived(self, ch, method, props, body):
-        print("Received token: {}".format(body))
-        self.hasToken = True
+    def receive_token(self, ch, method, props, body):
+        token = Token.from_bytes(body)
+        self.handle_token(token)
+
+    def try_receive_token(self):
+        msg = self.local_channel.basic_get(queue='token_queue', no_ack=True)
+        if msg[0] is None:
+            return False
+        self.handle_token(Token.from_bytes(msg[2]))
+        return True
+
+    # TODO
+    def handle_token(self, token: Token):
+        if abs(token.value) < self.m:  # old token
+            self.logger.warning(
+                "Received old token ({}); deleting".format(token))
+            return
+
+        self.logger.info("Received token: {}".format(token))
+
+        if token.type == TokenType.PING:
+            assert self.hasToken not in (HasToken.PING, HasToken.BOTH)
+            self.ping_token = token
+            if self.hasToken == HasToken.PONG:
+                self.hasToken = HasToken.BOTH
+            else:
+                self.hasToken = HasToken.PING
+        else:  # PONG
+            assert self.hasToken not in (HasToken.PONG, HasToken.BOTH)
+            self.pong_token = token
+            if self.hasToken == HasToken.PING:
+                self.hasToken = HasToken.BOTH
+            else:
+                self.hasToken = HasToken.PONG
+
+        if self.hasToken == HasToken.BOTH:
+            self.logger.warning("Tokens met, incarnating")
+            self.incarnate(token.value)
+        elif token.value == self.m:
+            if token.type == TokenType.PING:  # PONG lost, regenerate it
+                self.logger.critical("PONG Token lost, regenerating")
+                self.pong_token = self.regenerate(TokenType.PONG, -token.value)
+            else:  # PING lost
+                self.logger.critical("PING Token lost, regenerating")
+                self.ping_token = self.regenerate(TokenType.PING, -token.value)
+            self.hasToken = HasToken.BOTH
+
+    def regenerate(self, type_: TokenType, value: int):
+        return Token(type_, value)
+
+    def incarnate(self, value: int):
+        self.ping_token = Token(TokenType.PING, abs(value)+1)
+        self.pong_token = Token(TokenType.PONG, -(abs(value)+1))
 
     def loop(self):
-        while not self.exit_flag:
-            while not self.hasToken:
-                self.local_conn.process_data_events()
+        if self.ID == 1:
+            self.logger.info("First node, initializing tokens")
+            self.hasToken = HasToken.BOTH
+            self.pass_token(Token(TokenType.PING, 1))
+            self.pass_token(Token(TokenType.PONG, -1))
 
-            for _ in range(3):
-                print(".", end='', flush=True)
-                time.sleep(1)
-            print()
-            self.remote_channel.basic_publish(exchange='',
-                                              routing_key='token_queue',
-                                              body='Hello!')
-            print("Passed token")
-            self.hasToken = False
+        try:
+            while True:
+                if self.hasToken == HasToken.NONE:
+                    self.local_conn.process_data_events()
 
-        print("Cleaning up and exiting")
-        self.remote_conn.close()
-        self.local_conn.close()
+                if self.hasToken == HasToken.PING:
+                    self.logger.warning("Entering critical section")
+                    time.sleep(1)
+                    self.logger.warning("Leaving critical section")
+                    if self.try_receive_token():
+                        continue
+                    self.pass_token(self.ping_token)
+                elif self.hasToken == HasToken.PONG:
+                    self.pass_token(self.pong_token)
+                elif self.hasToken == HasToken.BOTH:
+                    self.pass_token(self.ping_token)
+                    self.pass_token(self.pong_token)
+        except KeyboardInterrupt:
+            print("Cleaning up and exiting")
+            self.remote_conn.close()
+            self.local_conn.close()
 
-    def set_flag(self, signal, frame):
-        self.exit_flag = True
+    # TODO (jedna funkcja?)
+    def lose_ping_token(self, signal, frame):
+        pass
+
+    def lose_pong_token(self, signal, frame):
+        pass
 
 
 if __name__ == '__main__':
     node = Node()
-    signal.signal(signal.SIGINT, node.exit_flag)
-    time.sleep(3)
+    signal.signal(signal.SIGUSR1, node.lose_ping_token)
+    signal.signal(signal.SIGUSR2, node.lose_pong_token)
+    time.sleep(1)
     node.loop()
