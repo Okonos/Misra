@@ -75,7 +75,7 @@ class Node:
     def pass_token(self, token: Token):
         self.m = token.value
         if token.type == TokenType.PONG:
-            time.sleep(1)
+            time.sleep(0.5)
             self.pong_token = None
         else:
             self.ping_token = None
