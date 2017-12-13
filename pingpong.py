@@ -122,10 +122,7 @@ class Node:
         else:  # PONG
             self.pong_token = token
 
-        if self.hasToken == HasToken.BOTH:
-            self.logger.warning("Tokens met, incarnating")
-            self.incarnate(token.value)
-        elif token.value == self.m:
+        if token.value == self.m:
             if token.type == TokenType.PING:  # PONG lost, regenerate it
                 self.logger.critical("PONG Token lost, regenerating")
                 self.pong_token = self.regenerate(TokenType.PONG, -token.value)
@@ -138,8 +135,8 @@ class Node:
         return Token(type_, value)
 
     def incarnate(self, value: int):
-        self.ping_token = Token(TokenType.PING, abs(value)+1)
-        self.pong_token = Token(TokenType.PONG, -(abs(value)+1))
+        return Token(TokenType.PING, abs(value)+1),\
+            Token(TokenType.PONG, -(abs(value)+1))
 
     def loop(self):
         if self.ID == 1:
@@ -163,6 +160,9 @@ class Node:
                 elif self.hasToken == HasToken.PONG:
                     self.pass_token(self.pong_token)
                 elif self.hasToken == HasToken.BOTH:
+                    self.logger.warning("Tokens met, incarnating")
+                    self.ping_token, self.pong_token = \
+                        self.incarnate(self.ping_token.value)
                     self.pass_token(self.ping_token)
                     self.pass_token(self.pong_token)
         except KeyboardInterrupt:
