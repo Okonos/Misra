@@ -1,4 +1,5 @@
 import os
+import sys
 import pika
 import logging
 import time
@@ -107,7 +108,14 @@ class Node:
 
         self.logger.info("Received token: {}".format(token))
 
-        assert self.hasToken not in (HasToken(token.type), HasToken.BOTH)
+        try:
+            assert self.hasToken not in (HasToken(token.type), HasToken.BOTH)
+        except AssertionError:
+            err = "AssertionError! {}; HasToken = {}"
+            self.logger.critical(err.format(token, self.hasToken.name))
+            self.cleanup()
+            sys.exit(1)
+
         self.hasToken = HasToken(self.hasToken + token.type)
         if token.type == TokenType.PING:
             self.ping_token = token
@@ -158,21 +166,21 @@ class Node:
                     self.pass_token(self.ping_token)
                     self.pass_token(self.pong_token)
         except KeyboardInterrupt:
-            print("Cleaning up and exiting")
-            self.remote_conn.close()
-            self.local_conn.close()
+            self.cleanup()
 
-    # TODO (jedna funkcja?)
-    def lose_ping_token(self, signal, frame):
-        self.tokens_to_lose.add(TokenType.PING)
+    def cleanup(self):
+        print("Cleaning up and exiting")
+        self.remote_conn.close()
+        self.local_conn.close()
 
-    def lose_pong_token(self, signal, frame):
-        self.tokens_to_lose.add(TokenType.PONG)
+    def lose_token(self, signum, frame):
+        self.tokens_to_lose.add(TokenType.PING if signum == signal.SIGUSR1
+                                else TokenType.PONG)
 
 
 if __name__ == '__main__':
     node = Node()
-    signal.signal(signal.SIGUSR1, node.lose_ping_token)
-    signal.signal(signal.SIGUSR2, node.lose_pong_token)
+    signal.signal(signal.SIGUSR1, node.lose_token)
+    signal.signal(signal.SIGUSR2, node.lose_token)
     time.sleep(1)
     node.loop()
