@@ -43,6 +43,7 @@ class Node:
         self.hasToken = HasToken.NONE
         self.ping_token = None
         self.pong_token = None
+        self.tokens_to_lose = set()
         self.ID = int(os.uname().nodename[4:])
         self.logger = logging.getLogger(__file__)
         self.logger.setLevel(logging.DEBUG)
@@ -79,8 +80,13 @@ class Node:
         else:
             self.ping_token = None
         self.hasToken = HasToken(self.hasToken - token.type)
-        self.remote_channel.publish(exchange='', routing_key='token_queue',
-                                    body=token.values())
+
+        if token.type in self.tokens_to_lose:
+            self.logger.critical("Lost {} token!".format(token.type.name))
+            self.tokens_to_lose.remove(token.type)
+        else:
+            self.remote_channel.publish(exchange='', routing_key='token_queue',
+                                        body=token.values())
 
     def receive_token(self, ch, method, props, body):
         token = Token.from_bytes(body)
@@ -158,10 +164,10 @@ class Node:
 
     # TODO (jedna funkcja?)
     def lose_ping_token(self, signal, frame):
-        pass
+        self.tokens_to_lose.add(TokenType.PING)
 
     def lose_pong_token(self, signal, frame):
-        pass
+        self.tokens_to_lose.add(TokenType.PONG)
 
 
 if __name__ == '__main__':
