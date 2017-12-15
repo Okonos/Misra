@@ -39,8 +39,10 @@ Vagrant.configure("2") do |config|
 			SHELL
 			if File.file?("./hosts")
 				n.vm.provision "file", source: "hosts", destination: "/tmp/hosts"
-				n.vm.provision "shell", inline: "cat /tmp/hosts >> /etc/hosts",
-					privileged: true
+				n.vm.provision "shell", privileged: true, inline: <<-SHELL
+					sed -i '/192.168.10.*/d' /etc/hosts
+					cat /tmp/hosts >> /etc/hosts
+				SHELL
 			end
 		end
 	end
