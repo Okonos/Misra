@@ -5,6 +5,7 @@ import logging
 import time
 import signal
 from enum import IntEnum
+from colorformatter import ColorFormatter
 
 
 class HasToken(IntEnum):
@@ -50,8 +51,8 @@ class Node:
         self.logger.setLevel(logging.DEBUG)
         handler = logging.StreamHandler()
         handler.setLevel(logging.INFO)
-        formatter = logging.Formatter(
-            '%(asctime)s:%(msecs)d - %(levelname)s - %(message)s',
+        formatter = ColorFormatter(
+            '%(asctime)s:%(msecs)3d - %(levelname)-7s - %(message)s',
             datefmt='%M:%S')
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
