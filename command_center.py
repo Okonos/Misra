@@ -31,6 +31,7 @@ for i in range(1, nodesNum+1):
     keyboard.add_hotkey('alt+'+n, sendSignal, (n, '2'))
 
 try:
+    signal.signal(signal.SIGQUIT, signal.SIG_IGN)  # ignore SIGQUIT (^4)
     signal.pause()
 except KeyboardInterrupt:
     print("Quitting")
