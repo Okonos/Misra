@@ -149,7 +149,7 @@ class Node:
         try:
             while True:
                 if self.hasToken == HasToken.NONE:
-                    self.local_conn.process_data_events()
+                    self.local_conn.process_data_events(None)
 
                 if self.hasToken == HasToken.PING:
                     self.logger.warning("Entering critical section")
