@@ -1,7 +1,7 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-numnodes = 3
+numnodes = 4
 vmmemory = 512
 
 nodes = []
